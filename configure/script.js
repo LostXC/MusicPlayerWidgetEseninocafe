@@ -1,7 +1,7 @@
 const appId = "nuttys-ytmdesktop-widget";
 const appName = "nuttys YouTube Music Widget";
 const appVersion = "1.0.0";
-const baseURL = "http://LucasM-D.github.io/MusicPlayerWidgetEseninocafe";
+const baseURL = "http://LostXC.github.io/MusicPlayerWidgetEseninocafe";
 
 let browserSourceURL = "";
 
