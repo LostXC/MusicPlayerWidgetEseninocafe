@@ -69,7 +69,7 @@ async function RequestToken() {
         if (data.hasOwnProperty("statusCode")) {
             ShowError(data.statusCode, data.message);
         } else {
-            browserSourceURL = `http://LucasM-D.github.io/MusicPlayerWidgetEseninocafe?token=${data.token}`;
+            browserSourceURL = `https://LostXC.github.io/MusicPlayerWidgetEseninocafe?token=${data.token}`;
             const btn = document.getElementById("copyURLButton");
             if (btn) {
                 btn.disabled = false;
