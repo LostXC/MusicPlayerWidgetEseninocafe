@@ -1,0 +1,307 @@
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+	--primary-text: #000000;
+	--bg-color: transparent;
+	--border-radius: 20px;
+	--stroke-color: #000000;
+	--fill-color: #ffffff;
+}
+
+html, body {
+	width: 100vw;
+	height: 100vh;
+	font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+	letter-spacing: 0.001em;
+	color: var(--primary-text);
+	background: var(--bg-color) !important;
+	overflow: hidden;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+::-webkit-scrollbar {
+	display: none;
+}
+
+#mainContainer {
+	position: relative;
+	background: transparent;
+	padding: 0;
+	box-sizing: border-box;
+	transform: translateZ(0);
+	will-change: transform;
+}
+
+.sub-card-wrapper {
+	position: relative;
+	width: 485px;
+	height: 120px;
+}
+
+.sub-border-canvas {
+	position: absolute;
+	top: -30px; 
+	left: -30px;
+	z-index: 0;
+	pointer-events: none;
+}
+
+.sub-card-content {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	padding: 12px;
+	gap: 10px;
+	width: 100%;
+	height: 100%;
+	border-radius: var(--border-radius);
+	opacity: 0;
+}
+
+.album-art {
+	display: block;
+	width: 96px;
+	height: 96px;
+	border-radius: 10px;
+	flex-shrink: 0;
+	object-fit: cover;
+	background-color: #e51e38;
+}
+
+.info-area {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	width: 352px;
+	height: 96px;
+	gap: 6px;
+	flex-shrink: 0;
+	padding-right: 4px;
+}
+
+.title-wrapper {
+	width: 100%;
+	height: 36px;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.title {
+	display: inline-block;
+	font-weight: 600;
+	font-size: 30px;
+	line-height: 36px;
+	color: var(--primary-text);
+	will-change: transform;
+}
+
+.artist-wrapper {
+	width: 100%;
+	height: 24px;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.artist {
+	display: inline-block;
+	font-weight: 500;
+	font-size: 20px;
+	line-height: 24px;
+	color: var(--primary-text);
+	will-change: transform;
+}
+
+.progress-area {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	width: 100%;
+	height: 24px;
+	gap: 8px; /* Buffer space for the times and progress line */
+}
+
+.time {
+	font-weight: 500;
+	font-size: 20px;
+	line-height: 24px;
+	color: var(--primary-text);
+	flex-shrink: 0;
+}
+
+#timeCurrent { width: 44px; text-align: left; }
+#timeRemaining { width: 50px; text-align: right; }
+
+.progress-bar-container {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex-grow: 1;
+	height: 24px;
+}
+
+#progressSvg {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 1;
+	overflow: visible;
+}
+
+.progress-thumb {
+	position: absolute;
+	left: 0%;
+	width: 14px;
+	height: 14px;
+	background-color: var(--stroke-color);
+	border-radius: 50%;
+	z-index: 2;
+	transform: translateX(-50%);
+	will-change: left;
+}
+
+/* ==========================================================
+   ADDED MISSING ELEMENTS FOR NUTTY'S AUTH & STATUS POPUPS
+========================================================== */
+
+#statusContainer { 
+	font-weight: 500; 
+	font-size: 30px; 
+	text-align: center; 
+	background-color: #D12025; 
+	color: white; 
+	padding: 10px; 
+	border-radius: 10px; 
+	position: absolute; 
+	top: 50%; 
+	left: 50%; 
+	transform: translate(-50%, -50%); 
+	opacity: 0;
+	z-index: 9999;
+}
+
+#setupContainer {
+	position: absolute;
+	width: 100vw;
+	height: 100vh;
+	background-color: #282828;
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: white;
+}
+
+#errorBox { 
+	background-color: #6d0b0b; 
+	border-radius: 10px; 
+	padding: 20px 40px; 
+	position: absolute; 
+	left: 50%; 
+	top: 50%; 
+	transform: translate(-50%, -50%); 
+	filter: drop-shadow(0px 0px 4px rgba(0, 0, 0, 1)); 
+	display: none; 
+	text-align: center;
+}
+
+#connectBox { 
+	background-color: #181818; 
+	border-radius: 10px; 
+	padding: 60px; 
+	position: absolute; 
+	left: 50%; 
+	top: 50%; 
+	transform: translate(-50%, -50%); 
+	filter: drop-shadow(0px 0px 4px rgba(0, 0, 0, 1)); 
+	width: 400px; 
+	text-align: center; 
+}
+
+#authorizationBox { 
+	background-color: #252525; 
+	border-radius: 10px; 
+	padding: 60px; 
+	position: absolute; 
+	left: 50%; 
+	top: 50%; 
+	transform: translate(-50%, -50%); 
+	filter: drop-shadow(0px 0px 4px rgba(0, 0, 0, 1)); 
+	width: 400px; 
+	display: none; 
+	text-align: center;
+}
+
+#authorizationCode { 
+	display: block; 
+	text-align: center; 
+	font-size: 60px; 
+	font-weight: 700; 
+	padding-bottom: 30px; 
+	letter-spacing: 15px; 
+	color: #f44336; 
+}
+
+#authorizationComplete { 
+	display: none; 
+	text-align: center; 
+	padding-bottom: 20px; 
+}
+
+button { 
+	font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+	font-size: 20px; 
+	font-weight: 500; 
+	background-color: #f44336; 
+	color: white; 
+	opacity: 0.9; 
+	border-width: 0; 
+	border-radius: 10px; 
+	padding: 10px 20px; 
+	width: 100%; 
+}
+
+button:hover { 
+	opacity: 1; 
+	cursor: pointer; 
+}
+
+#instructionsButton, #donateButton { 
+	background-color: #2e2e2e; 
+}
+
+#copyURLButton { 
+	background-color: #ffffff; 
+	color: #181818; 
+	width: 100%; 
+	transition: all 0.2s ease; 
+}
+
+#copyURLButton:disabled { 
+	background-color: #636363; 
+	opacity: 0.8; 
+	cursor: inherit; 
+}
+
+#closeErrorBox { 
+	background-color: #ffffff; 
+	color: #181818; 
+	margin-top: 15px;
+}
+
+#errorCode { 
+	font-size: 24px; 
+	font-weight: bold; 
+	margin-bottom: 10px; 
+}
+
+#errorMessage { 
+	font-size: 18px; 
+	margin-bottom: 20px; 
+}

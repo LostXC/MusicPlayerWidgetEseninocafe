@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>YouTube Music Widget</title>
+    <meta charset="UTF-8">
+    <link rel="shortcut icon" href="#" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css" />
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <!-- Connection Status Popup -->
+    <div id="statusContainer">Connecting...</div>
+
+    <!-- Main Music Player -->
+    <div id="mainContainer">
+        <!-- Main wrapper imitating your chat box structure -->
+        <div class="sub-card-wrapper">
+            <!-- Boiling border canvas behind the content -->
+            <canvas class="sub-border-canvas"></canvas>
+            
+            <!-- Pure HTML/CSS Content Layout -->
+            <div class="sub-card-content">
+                <img id="albumArt" class="album-art" src="" alt="Album Art" />
+                
+                <div class="info-area">
+                    <div class="title-wrapper">
+                        <div id="trackTitle" class="title"></div>
+                    </div>
+                    <div class="artist-wrapper">
+                        <div id="trackArtist" class="artist"></div>
+                    </div>
+                    
+                    <div class="progress-area">
+                        <span id="timeCurrent" class="time">0:00</span>
+                        <div class="progress-bar-container" id="progressContainer">
+                            <!-- Inline SVG for the Sine Wave -->
+                            <svg id="progressSvg" height="24">
+                                <path id="progressPath" fill="none" stroke="#000000" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            <div id="progressThumb" class="progress-thumb"></div>
+                        </div>
+                        <span id="timeRemaining" class="time">-0:00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Setup / Authorization Popup -->
+    <div id="setupContainer" style="display: none;">
+        <div id="authorizationBox">
+            <h2>Authentication Needed</h2>
+            <p style="margin-bottom: 20px;">Enter this code in YTMDesktop:</p>
+            <div id="authorizationCode">----</div>
+            <div id="authorizationComplete">
+                <p style="margin-bottom: 20px;">Authorization Successful!</p>
+            </div>
+            <button id="copyURLButton" disabled onclick="CopyToURL()">Waiting for approval...</button>
+        </div>
+        
+        <div id="errorBox">
+            <div id="errorCode">Error</div>
+            <div id="errorMessage">Could not connect to YTMDesktop.</div>
+            <button id="closeErrorBox" onclick="CloseErrorBox()">Okay</button>
+        </div>
+    </div>
+
+    <script src="./script.js"></script>
+</body>
+</html>
