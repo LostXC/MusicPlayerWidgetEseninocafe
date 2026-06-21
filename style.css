@@ -130,11 +130,19 @@ html, body {
 	font-size: 20px;
 	line-height: 24px;
 	color: var(--primary-text);
-	flex-shrink: 0;
+	flex-shrink: 0; /* Prevents the text from squishing or wrapping */
+	font-variant-numeric: tabular-nums; /* Keeps number widths consistent so the bar doesn't jitter while playing */
 }
 
-#timeCurrent { width: 44px; text-align: left; }
-#timeRemaining { width: 50px; text-align: right; }
+#timeCurrent { 
+	width: max-content; 
+	text-align: left; 
+}
+
+#timeRemaining { 
+	width: max-content; 
+	text-align: right; 
+}
 
 .progress-bar-container {
 	position: relative;
