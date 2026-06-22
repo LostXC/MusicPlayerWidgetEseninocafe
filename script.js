@@ -624,19 +624,26 @@ function UpdatePlayer(stateData) {
         clearTimeout(hideDebounceTimeout);
         clearTimeout(durationTimeout);
  
-        if (player.trackState === 1) {
+        if (player.trackState === 1 || player.trackState === 2) {
+            // 1 = playing, 2 = buffering while a track loads (e.g. when you skip
+            // or a new song starts right after another). Keep the widget visible
+            // for both so track changes stay seamless and the intro animation
+            // never replays mid-skip.
             window.setWidgetVisibility(true);
-            state.isPlaying = true;
-            if (visibilityDuration > 0) {
+            state.isPlaying = (player.trackState === 1);
+
+            if (player.trackState === 1 && visibilityDuration > 0) {
                 durationTimeout = setTimeout(() => {
                     window.setWidgetVisibility(false);
                 }, visibilityDuration * 1000);
             }
         } else {
+            // Genuinely paused/stopped: run the outro after a short debounce so
+            // it reacts promptly instead of waiting a long time.
             state.isPlaying = false;
             hideDebounceTimeout = setTimeout(() => {
                 window.setWidgetVisibility(false);
-            }, 500);
+            }, 400);
         }
         currentState = player.trackState;
     }
