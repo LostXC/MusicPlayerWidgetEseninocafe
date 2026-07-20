@@ -89,10 +89,13 @@ html, body {
 	height: 36px;
 	overflow: hidden;
 	white-space: nowrap;
+	/* soft edge fade for the marquee; the gradient itself is written inline by JS */
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
 }
 
 .title {
-	display: inline-block;
+	display: inline-flex;   /* holds the two smooth-wrap copies side by side */
 	font-weight: 600;
 	font-size: 30px;
 	line-height: 36px;
@@ -105,15 +108,23 @@ html, body {
 	height: 24px;
 	overflow: hidden;
 	white-space: nowrap;
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
 }
 
 .artist {
-	display: inline-block;
+	display: inline-flex;
 	font-weight: 500;
 	font-size: 20px;
 	line-height: 24px;
 	color: var(--primary-text);
 	will-change: transform;
+}
+
+/* one run of the line's text; two of these wrap seamlessly for the marquee */
+.mq-copy {
+	white-space: nowrap;
+	flex-shrink: 0;
 }
 
 .progress-area {

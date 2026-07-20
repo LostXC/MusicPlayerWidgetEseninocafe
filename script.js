@@ -549,6 +549,131 @@ const progressContainer = document.getElementById('progressContainer');
 const progressSvg = document.getElementById('progressSvg');
 const progressPath = document.getElementById('progressPath');
 
+/* ═══════════════════════════════════════════════════════════════════
+   SMOOTH-WRAP MARQUEE — title + artist, ported from the Music Card
+   (collage.html). Two copies wrap seamlessly: rest at home, cruise once
+   around (through the end and the wrapped start) at a shared ease-in →
+   cruise → ease-out pace, land back at home, loop. A soft edge fade
+   (written inline per frame) masks the clipped ends. Both lines share one
+   clock, sized by the longest line, so they move and loop together.
+   ═══════════════════════════════════════════════════════════════════ */
+const MQ = { speed: 50, easeMs: 650, pauseStart: 2000, smoothGap: 32, fadePx: 12 }; // px/s · accel/decel ms · rest ms · copy gap · fade ramp px
+const V_CRUISE = MQ.speed / 1000;        // px per ms
+const A_RAMP = V_CRUISE / MQ.easeMs;     // px per ms² (fixed accel/decel)
+function mqScrollMs(D) {                   // total time to travel distance D
+    if (D <= 0) return 0;
+    if (D >= V_CRUISE * MQ.easeMs) return D / V_CRUISE + MQ.easeMs;  // trapezoid
+    return 2 * Math.sqrt(D / A_RAMP);      // triangle (too short to reach cruise)
+}
+function mqTravel(D, st) {                  // how far distance-D has moved st ms in
+    if (D <= 0 || st <= 0) return 0;
+    const T = mqScrollMs(D); if (st >= T) return D;
+    if (D >= V_CRUISE * MQ.easeMs) {        // trapezoid
+        const E = MQ.easeMs;
+        if (st < E) return 0.5 * A_RAMP * st * st;
+        if (st < T - E) return 0.5 * V_CRUISE * E + V_CRUISE * (st - E);
+        const q = T - st; return D - 0.5 * A_RAMP * q * q;
+    }
+    const half = T / 2;                    // triangle
+    if (st < half) return 0.5 * A_RAMP * st * st;
+    const q = T - st; return D - 0.5 * A_RAMP * q * q;
+}
+
+function makeLineMarquee(winEl, innerEl) {
+    innerEl.style.gap = MQ.smoothGap + 'px';
+    return { win: winEl, inner: innerEl, copies: innerEl.querySelectorAll('.mq-copy'), text: null, O: 0, unit: 0 };
+}
+const titleMq = makeLineMarquee(document.querySelector('.title-wrapper'), titleEl);
+const artistMq = makeLineMarquee(document.querySelector('.artist-wrapper'), artistEl);
+let mqGroupCycle = MQ.pauseStart;
+
+// Fill both copies; returns true if the text actually changed.
+function setLineText(m, text) {
+    text = text || '';
+    if (m.text === text) return false;
+    m.text = text;
+    m.copies[0].textContent = text;
+    m.copies[1].textContent = text;
+    return true;
+}
+// Read layout once per song change (not per frame): O = overflow, unit = one full wrap.
+function measureMarquees() {
+    for (const m of [titleMq, artistMq]) {
+        const copyW = m.copies[0].offsetWidth;
+        m.O = Math.max(0, Math.round(copyW - m.win.clientWidth));
+        m.unit = copyW + MQ.smoothGap;
+        m.copies[1].style.display = m.O > 0 ? '' : 'none';  // hide the 2nd copy unless it overflows
+    }
+    let maxUnit = 0;
+    if (titleMq.O > 0) maxUnit = Math.max(maxUnit, titleMq.unit);
+    if (artistMq.O > 0) maxUnit = Math.max(maxUnit, artistMq.unit);
+    mqGroupCycle = MQ.pauseStart + mqScrollMs(maxUnit);
+}
+// off ≤ 0; l fades the left edge (ramps as text scrolls off), r the right (always on while overflowing).
+function setLineFade(m, l, r) {
+    if (m.O <= 0) { m.win.style.webkitMaskImage = 'none'; m.win.style.maskImage = 'none'; return; }
+    const lp = (l * MQ.fadePx).toFixed(2), rp = (r * MQ.fadePx).toFixed(2);
+    const g = `linear-gradient(90deg, transparent 0, #000 ${lp}px, #000 calc(100% - ${rp}px), transparent 100%)`;
+    m.win.style.webkitMaskImage = g;
+    m.win.style.maskImage = g;
+}
+function tickLineMarquee(m, timeMs) {
+    if (m.O <= 0) { m.inner.style.transform = 'translateX(0)'; setLineFade(m, 0, 0); return; }
+    const t = timeMs % mqGroupCycle;
+    // -unit ≡ home (the 2nd copy lands exactly where the 1st began → seamless loop).
+    const off = t < MQ.pauseStart ? 0 : -mqTravel(m.unit, t - MQ.pauseStart);
+    m.inner.style.transform = `translateX(${off}px)`;
+    const d = Math.min(-off, m.unit + off);   // distance from whichever home edge is nearest
+    setLineFade(m, Math.max(0, Math.min(1, d / MQ.fadePx)), 1);
+}
+// Re-measure once the web font loads (glyph widths shift when Inter swaps in).
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureMarquees);
+
+/* ── Song-change fade reset ─────────────────────────────────────────
+   Ported from the Multichat overlay's username fade-swap: when the track
+   changes, fade the title + artist OUT, swap in the new text at the home
+   position, then fade them back IN. This also guarantees the smooth-wrap
+   scroll restarts cleanly from the beginning for every new song, instead
+   of the text popping in mid-scroll. */
+const MQ_RESET_FADE_MS = 200;   // fade-out / fade-in half-durations (ms)
+let mqReset = null;             // active transition { phase, start, title, artist } or null
+let songKey = '';               // identity of the shown/transitioning track text
+
+function applySongText(title, artist) {
+    setLineText(titleMq, title);
+    setLineText(artistMq, artist);
+    measureMarquees();
+    state.scrollStartTime = null;   // restart the shared scroll clock at home
+}
+
+function startSongTextReset(title, artist) {
+    if (!titleMq.text && !artistMq.text) {
+        // First song: nothing on screen to fade out — show it and just fade in.
+        applySongText(title, artist);
+        mqReset = { phase: 'in', start: performance.now() };
+    } else {
+        // Keep the old text visible; fade it out, swap at the bottom, fade in.
+        mqReset = { phase: 'out', start: performance.now(), title, artist };
+    }
+}
+
+// Advance the fade-reset one frame; returns the current text opacity (0→1).
+function tickSongTextReset() {
+    if (!mqReset) return 1;
+    const p = Math.min(1, (performance.now() - mqReset.start) / MQ_RESET_FADE_MS);
+    if (mqReset.phase === 'out') {
+        if (p >= 1) {
+            applySongText(mqReset.title, mqReset.artist);   // swap new text in at home
+            mqReset = { phase: 'in', start: performance.now() };
+            return 0;
+        }
+        return 1 - p;
+    }
+    // phase 'in'
+    if (p >= 1) { mqReset = null; return 1; }
+    return p;
+}
+
 initBoilingBorder(borderCanvasEl, 485, 120);
 
 let currentState = -1;
@@ -590,7 +715,10 @@ function UpdatePlayer(stateData) {
     state.durationSeconds = songInfo.durationSeconds || 0;
     
     const serverSecs = player.videoProgress || 0;
-    const songChanged = titleEl && titleEl.innerText !== songInfo.title;
+    const incomingTitle = songInfo.title || '';
+    const incomingArtist = songInfo.author || '';
+    const incomingKey = incomingTitle + '␟' + incomingArtist;
+    const songChanged = incomingKey !== songKey;
     const stateChanged = player.trackState !== currentState;
     
     let localSecs = state.currentSecs;
@@ -606,19 +734,18 @@ function UpdatePlayer(stateData) {
         state.lastUpdateTime = performance.now();
     }
 
-    // Force scroll timer to restart when a new song begins
-    if (songChanged) {
-        state.scrollStartTime = null; 
-    }
-
     if (songInfo.thumbnails && songInfo.thumbnails.length > 0) {
         const thumbnail = songInfo.thumbnails[songInfo.thumbnails.length - 1].url;
         const albumArtEl = document.getElementById("albumArt");
         if (albumArtEl && albumArtEl.src !== thumbnail) albumArtEl.src = thumbnail;
     }
 
-    if (titleEl && titleEl.innerText !== songInfo.title) titleEl.innerText = songInfo.title;
-    if (artistEl && artistEl.innerText !== songInfo.author) artistEl.innerText = songInfo.author;
+    // On a genuine track change, run the fade reset: the title + artist fade
+    // out, swap to the new text at the home position, then fade back in.
+    if (songChanged) {
+        songKey = incomingKey;
+        startSongTextReset(incomingTitle, incomingArtist);
+    }
 
     if (player.trackState !== currentState) {
         clearTimeout(hideDebounceTimeout);
@@ -671,44 +798,18 @@ function connectws() {
     });
 }
 
-function getScrollOffset(overflow, syncOverflow, timeMs) {
-    if (overflow <= 0) return 0;
-    const speed = 40;
-    const scrollDur = (syncOverflow / speed) * 1000;
-    const myScrollDur = (overflow / speed) * 1000;
-    const pauseStart = 6000;
-    const pauseEnd = 6000;
-    const totalCycle = pauseStart + scrollDur + pauseEnd;
-
-    const t = timeMs % totalCycle;
-    let offsetX = 0;
-
-    if (t < pauseStart) offsetX = 0;
-    else if (t >= pauseStart + scrollDur) offsetX = -overflow;
-    else {
-        const scrollTime = t - pauseStart;
-        if (scrollTime >= myScrollDur) offsetX = -overflow;
-        else {
-            const p = scrollTime / myScrollDur;
-            const ease = -(Math.cos(Math.PI * p) - 1) / 2;
-            offsetX = -(ease * overflow);
-        }
-    }
-    return offsetX;
-}
-
 function updateUI(ts) {
     if (state.scrollStartTime === null) state.scrollStartTime = ts;
     const timeMs = ts - state.scrollStartTime;
 
-    if (titleEl && artistEl) {
-        const titleOverflow = Math.max(0, titleEl.scrollWidth - titleEl.parentElement.clientWidth);
-        const artistOverflow = Math.max(0, artistEl.scrollWidth - artistEl.parentElement.clientWidth);
-        const globalMaxOverflow = Math.max(titleOverflow, artistOverflow);
+    // Smooth-wrap marquee for the title + artist (shared clock via timeMs).
+    tickLineMarquee(titleMq, timeMs);
+    tickLineMarquee(artistMq, timeMs);
 
-        titleEl.style.transform = `translateX(${getScrollOffset(titleOverflow, globalMaxOverflow, timeMs)}px)`;
-        artistEl.style.transform = `translateX(${getScrollOffset(artistOverflow, globalMaxOverflow, timeMs)}px)`;
-    }
+    // Song-change fade reset: fade old text out, swap at home, fade new text in.
+    const textOpacity = tickSongTextReset();
+    titleMq.inner.style.opacity = textOpacity;
+    artistMq.inner.style.opacity = textOpacity;
 
     let currentSecs = state.currentSecs;
     if (state.isPlaying && state.durationSeconds > 0) {

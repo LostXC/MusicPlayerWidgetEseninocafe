@@ -26,11 +26,17 @@
                 <img id="albumArt" class="album-art" src="" alt="Album Art" />
                 
                 <div class="info-area">
+                    <!-- Two copies per line for the seamless smooth-wrap marquee
+                         (ported from the Music Card). JS fills both .mq-copy spans. -->
                     <div class="title-wrapper">
-                        <div id="trackTitle" class="title"></div>
+                        <div id="trackTitle" class="title">
+                            <span class="mq-copy"></span><span class="mq-copy" aria-hidden="true"></span>
+                        </div>
                     </div>
                     <div class="artist-wrapper">
-                        <div id="trackArtist" class="artist"></div>
+                        <div id="trackArtist" class="artist">
+                            <span class="mq-copy"></span><span class="mq-copy" aria-hidden="true"></span>
+                        </div>
                     </div>
                     
                     <div class="progress-area">
