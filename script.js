@@ -334,6 +334,10 @@ function initBoilingBorder(canvas, contentW, contentH) {
     let seed = Math.random() * 1000;
     const contentEl = document.querySelector('.sub-card-content');
     initEraserMask();
+    // initEraserMask has just put this in the document, so look it up once here
+    // rather than doing a getElementById on every frame of the loop below.
+    const eraserPathEl = document.getElementById('eraser-path');
+    let hiddenSettled = false;   // has the HIDDEN state already been wiped to screen?
 
     const STROKE_DUR = 1200;
     const FADE_DELAY = 300;
@@ -351,17 +355,27 @@ function initBoilingBorder(canvas, contentW, contentH) {
             eraserPts = null;
         }
 
-        // Clear slightly larger area to prevent any out-of-bound pixel artifacts from the skull
-        ctx.clearRect(-50, -50, cw + 100, ch + 100);
-        skullCtx.clearRect(-50, -50, cw + 100, ch + 100); 
-
+        // Between songs the widget sits HIDDEN, and this loop was still clearing two
+        // full-size canvases, re-querying the eraser path and re-writing the same two
+        // values sixty times a second for nothing. Both canvases and the mask only
+        // need wiping once on the way in; after that a hidden widget costs a single
+        // comparison per frame until it's asked to come back.
         if (window.widgetAnimState === 'HIDDEN') {
-            if (contentEl) contentEl.style.opacity = 0;
-            const eraserPathEl = document.getElementById('eraser-path');
-            if (eraserPathEl) eraserPathEl.setAttribute('d', ''); // Clear mask fully
+            if (!hiddenSettled) {
+                hiddenSettled = true;
+                ctx.clearRect(-50, -50, cw + 100, ch + 100);
+                skullCtx.clearRect(-50, -50, cw + 100, ch + 100);
+                if (contentEl) contentEl.style.opacity = 0;
+                if (eraserPathEl) eraserPathEl.setAttribute('d', ''); // Clear mask fully
+            }
             requestAnimationFrame(tick);
             return;
         }
+        hiddenSettled = false;
+
+        // Clear slightly larger area to prevent any out-of-bound pixel artifacts from the skull
+        ctx.clearRect(-50, -50, cw + 100, ch + 100);
+        skullCtx.clearRect(-50, -50, cw + 100, ch + 100);
 
         ctx.save();
         skullCtx.save(); // Save skull context
@@ -481,8 +495,7 @@ function initBoilingBorder(canvas, contentW, contentH) {
                     }
                 }
 
-                const eraserPathEl = document.getElementById('eraser-path');
-                if (eraserPathEl) {
+                if (eraserPathEl) {   // resolved once in initBoilingBorder
                     eraserPathEl.setAttribute('d', d);
                     const jx = (Math.random() - 0.5) * 2;
                     const jy = (Math.random() - 0.5) * 2;
@@ -610,24 +623,45 @@ function measureMarquees() {
     mqGroupCycle = MQ.pauseStart + mqScrollMs(maxUnit);
 }
 // off ≤ 0; l fades the left edge (ramps as text scrolls off), r the right (always on while overflowing).
+// The mask gradient is the one genuinely expensive write here — changing mask-image
+// forces Chromium to repaint the window every frame, which is painful when the
+// browser source is rasterising on the CPU. The fade only actually ramps over the
+// first / last MQ.fadePx of travel; through the 2s rest and the whole cruise both
+// edges sit pinned at their end values, so remembering the last string written
+// collapses the vast majority of frames to no write at all.
 function setLineFade(m, l, r) {
-    if (m.O <= 0) { m.win.style.webkitMaskImage = 'none'; m.win.style.maskImage = 'none'; return; }
-    const lp = (l * MQ.fadePx).toFixed(2), rp = (r * MQ.fadePx).toFixed(2);
-    const g = `linear-gradient(90deg, transparent 0, #000 ${lp}px, #000 calc(100% - ${rp}px), transparent 100%)`;
+    let g;
+    if (m.O <= 0) g = 'none';
+    else {
+        const lp = (l * MQ.fadePx).toFixed(2), rp = (r * MQ.fadePx).toFixed(2);
+        g = `linear-gradient(90deg, transparent 0, #000 ${lp}px, #000 calc(100% - ${rp}px), transparent 100%)`;
+    }
+    if (g === m._mask) return;
+    m._mask = g;
     m.win.style.webkitMaskImage = g;
     m.win.style.maskImage = g;
 }
+// Same idea for the transform: parked frames (and the tail of the ease, where
+// successive frames differ by far less than 1/100 px) skip the write entirely.
+function setLineOffset(m, off) {
+    const v = Math.round(off * 100) / 100;
+    if (v === m._off) return;
+    m._off = v;
+    m.inner.style.transform = `translateX(${v}px)`;
+}
 function tickLineMarquee(m, timeMs) {
-    if (m.O <= 0) { m.inner.style.transform = 'translateX(0)'; setLineFade(m, 0, 0); return; }
+    if (m.O <= 0) { setLineOffset(m, 0); setLineFade(m, 0, 0); return; }
     const t = timeMs % mqGroupCycle;
     // -unit ≡ home (the 2nd copy lands exactly where the 1st began → seamless loop).
     const off = t < MQ.pauseStart ? 0 : -mqTravel(m.unit, t - MQ.pauseStart);
-    m.inner.style.transform = `translateX(${off}px)`;
+    setLineOffset(m, off);
     const d = Math.min(-off, m.unit + off);   // distance from whichever home edge is nearest
     setLineFade(m, Math.max(0, Math.min(1, d / MQ.fadePx)), 1);
 }
 // Re-measure once the web font loads (glyph widths shift when Inter swaps in).
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureMarquees);
+// (the time labels resize with the font too, which moves the progress bar — so
+// re-read its cached width on the same signal)
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { measureMarquees(); refreshProgressWidth(); });
 
 /* ── Song-change fade reset ─────────────────────────────────────────
    Ported from the Multichat overlay's username fade-swap: when the track
@@ -798,18 +832,42 @@ function connectws() {
     });
 }
 
+// Cached, because the progress bar's width has to be read back out of layout and
+// doing that every frame — right after the marquee has written transforms and
+// masks — forces a synchronous style+layout pass on every single frame. The
+// container is a flex-grow child sitting between the two time labels, so its width
+// only actually moves when a label's text changes (see the refresh below).
+let progressContainerW = 0;
+let lastTimeCurrentText = null, lastTimeRemainingText = null, lastTextOpacity = null;
+function refreshProgressWidth() { if (progressContainer) progressContainerW = progressContainer.clientWidth; }
+
 function updateUI(ts) {
     if (state.scrollStartTime === null) state.scrollStartTime = ts;
     const timeMs = ts - state.scrollStartTime;
 
-    // Smooth-wrap marquee for the title + artist (shared clock via timeMs).
-    tickLineMarquee(titleMq, timeMs);
-    tickLineMarquee(artistMq, timeMs);
+    // Nothing is on screen while the widget is hidden, so skip every DOM write.
+    // The clocks keep running off `ts` / performance.now(), so the marquee and the
+    // song-change fade pick straight back up in phase when the widget returns.
+    const widgetHidden = window.widgetAnimState === 'HIDDEN';
+
+    if (!widgetHidden) {
+        // Smooth-wrap marquee for the title + artist (shared clock via timeMs).
+        tickLineMarquee(titleMq, timeMs);
+        tickLineMarquee(artistMq, timeMs);
+    }
 
     // Song-change fade reset: fade old text out, swap at home, fade new text in.
+    // This one still advances while hidden — it owns the text swap itself, so
+    // letting it run means a track that changes while the widget is away has
+    // already settled on the new title by the time the widget fades back in.
     const textOpacity = tickSongTextReset();
-    titleMq.inner.style.opacity = textOpacity;
-    artistMq.inner.style.opacity = textOpacity;
+    if (!widgetHidden && textOpacity !== lastTextOpacity) {
+        lastTextOpacity = textOpacity;
+        titleMq.inner.style.opacity = textOpacity;
+        artistMq.inner.style.opacity = textOpacity;
+    }
+
+    if (widgetHidden) { requestAnimationFrame(updateUI); return; }
 
     let currentSecs = state.currentSecs;
     if (state.isPlaying && state.durationSeconds > 0) {
@@ -821,14 +879,24 @@ function updateUI(ts) {
     const remainingSecs = Math.max(0, state.durationSeconds - currentSecs);
     const smoothProgress = state.durationSeconds > 0 ? (currentSecs / state.durationSeconds) : 0;
 
-    if (timeCurrentEl) timeCurrentEl.innerText = ConvertSeconds(currentSecs);
+    // The clock only ticks once a second, but this ran ~60 times a second, and an
+    // innerText write replaces the element's text node every time. Comparing first
+    // reduces it to the one write per second that actually shows something new —
+    // and tells us the rare moment the label's width can have changed (a digit
+    // added or dropped), which is the only thing that moves the bar's width.
+    let labelsChanged = false;
+    if (timeCurrentEl) {
+        const s = ConvertSeconds(currentSecs);
+        if (s !== lastTimeCurrentText) { lastTimeCurrentText = s; timeCurrentEl.innerText = s; labelsChanged = true; }
+    }
     if (timeRemainingEl) {
-        if (state.durationSeconds > 0) timeRemainingEl.innerText = "-" + ConvertSeconds(remainingSecs);
-        else timeRemainingEl.innerText = "-0:00";
+        const s = state.durationSeconds > 0 ? "-" + ConvertSeconds(remainingSecs) : "-0:00";
+        if (s !== lastTimeRemainingText) { lastTimeRemainingText = s; timeRemainingEl.innerText = s; labelsChanged = true; }
     }
 
     if (progressContainer && progressThumbEl && progressSvg && progressPath) {
-        const containerW = progressContainer.clientWidth;
+        if (labelsChanged || !progressContainerW) refreshProgressWidth();
+        const containerW = progressContainerW;
         const thumbX = smoothProgress * containerW;
 
         progressThumbEl.style.left = thumbX + 'px';
