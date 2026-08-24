@@ -135,10 +135,36 @@ function preloadSkull() {
 preloadSkull();
 // ────────────────────────────
 
+/* ── Boil cadence — same two knobs as the Multichat overlay ────────────────
+   boilFps  — how many drawings a second (they are held in between).
+   boilStep — how far the noise field moves between drawings. Simplex
+              decorrelates over ~1.0 of z, so a step this size makes each redraw
+              read as a fresh drawing rather than a nudge of the last one. The
+              clock used to advance by noiseTimeScale/fps, about 0.04, which is
+              why the line looked like it was moving instead of being redrawn.
+   Time is quantised to the drawing grid, so this border turns over on the same
+   beat as every other boiling outline, and the same expression serves as both
+   the noise coordinate and the redraw throttle.
+   Old smooth drift: ?boilFps=24&boilStep=0.042                              */
+const BOIL_FPS = Math.max(1, Math.min(60, parseInt(urlParams.get("boilFps")) || 7));
+const BOIL_STEP = Math.max(0, Math.min(4, parseFloat(urlParams.get("boilStep")) || 0.178));
+
 const BOIL_CFG = {
     cornerRadius: 20, strokeWidth: 7, noiseFreq: 4.2, noiseCoordScale: 0.006,
     noiseTimeScale: 1.0, noiseAmp: 1.5, divW: 240, divH: 80, divCorner: 10, padding: 30
 };
+
+// Live handles, read fresh every frame, so the boil can be dialled from the
+// console (or the OBS browser source's remote debugger) without a reload.
+window.BOIL = {
+    fps: BOIL_FPS,
+    step: BOIL_STEP,
+    get amp() { return BOIL_CFG.noiseAmp; },
+    set amp(v) { BOIL_CFG.noiseAmp = Math.max(0, Math.min(6, v)); },
+};
+// Which drawing `tSec` falls on, and where that drawing sits in the noise field.
+const boilIndexAt = (tSec) => Math.floor(tSec * BOIL.fps);
+const boilZ = (idx) => idx * BOIL.step;
 
 const Simplex3D = (function () {
     const F3 = 1.0 / 3.0, G3 = 1.0 / 6.0;
@@ -185,22 +211,38 @@ function boilBuildBasePath(W, H, R) {
     return pts;
 }
 
-function boilDeformPath(base, time, seed) {
+// `out` is a scratch array reused across frames. The .map() this replaced built a
+// fresh 680-object array on every tick — ~41k short-lived objects a second, which
+// is a steady stream of garbage for a loop that never needs the old points again.
+function boilDeformPath(base, time, seed, out) {
     const freq = BOIL_CFG.noiseFreq * BOIL_CFG.noiseCoordScale, t = time * BOIL_CFG.noiseTimeScale;
-    return base.map(p => ({ x: p.x + Simplex3D(p.x * freq + seed, p.y * freq + seed, t) * BOIL_CFG.noiseAmp, y: p.y + Simplex3D(p.x * freq + seed + 99.9, p.y * freq + seed + 99.9, t) * BOIL_CFG.noiseAmp }));
+    for (let i = 0; i < base.length; i++) {
+        const p = base[i];
+        const o = out[i] || (out[i] = { x: 0, y: 0 });
+        o.x = p.x + Simplex3D(p.x * freq + seed, p.y * freq + seed, t) * BOIL_CFG.noiseAmp;
+        o.y = p.y + Simplex3D(p.x * freq + seed + 99.9, p.y * freq + seed + 99.9, t) * BOIL_CFG.noiseAmp;
+    }
+    return out;
 }
 
-function boilTraceSmoothPath(c, pts) {
-    if (pts.length < 3) return;
-    c.beginPath();
+// Build the smoothed outline ONCE per draw and hand the same Path2D to every
+// fill and stroke the frame needs. Tracing straight into the context meant
+// replaying all 680 quadraticCurveTo calls again for the black outline over the
+// shape that had just been filled, and again for the white pass during the
+// intro — the context rebuilds its path from scratch after every beginPath(), so
+// it had no way to know it was being handed the identical curve each time.
+function boilBuildSmoothPath(pts) {
+    const path = new Path2D();
+    if (pts.length < 3) return path;
     let p1 = pts[0];
-    c.moveTo((pts[pts.length - 1].x + p1.x) / 2, (pts[pts.length - 1].y + p1.y) / 2);
+    path.moveTo((pts[pts.length - 1].x + p1.x) / 2, (pts[pts.length - 1].y + p1.y) / 2);
     for (let i = 0; i < pts.length; i++) {
         p1 = pts[i];
         const p2 = pts[(i + 1) % pts.length];
-        c.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+        path.quadraticCurveTo(p1.x, p1.y, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
     }
-    c.closePath();
+    path.closePath();
+    return path;
 }
 
 let eraserPts = null;
@@ -270,11 +312,22 @@ function initEraserMask() {
         </defs>
     `;
     document.body.appendChild(svg);
+}
+
+/* The mask only does anything during the outro, but leaving it bound to the
+   wrapper for the whole session made Chromium push the entire card subtree
+   through a masking pass on every repaint — to apply a mask that is a plain
+   white rectangle whenever the eraser path is empty. Bind it while erasing,
+   drop it the rest of the time. */
+let eraserMaskOn = false;
+function setEraserMaskActive(on) {
+    if (on === eraserMaskOn) return;
     const wrapper = document.querySelector('.sub-card-wrapper');
-    if (wrapper) {
-        wrapper.style.mask = 'url(#eraser-mask)';
-        wrapper.style.webkitMask = 'url(#eraser-mask)';
-    }
+    if (!wrapper) return;
+    eraserMaskOn = on;
+    const v = on ? 'url(#eraser-mask)' : '';
+    wrapper.style.mask = v;
+    wrapper.style.webkitMask = v;
 }
 
 window.widgetAnimState = 'HIDDEN';
@@ -285,11 +338,13 @@ window.setWidgetVisibility = function(visible) {
         window.widgetAnimState = 'APPEARING';
         window.widgetAnimStartTime = performance.now();
         eraserPts = null;
+        setEraserMaskActive(false);
         const eraserPathEl = document.getElementById('eraser-path');
         if (eraserPathEl) eraserPathEl.setAttribute('d', '');
     } else if (!visible && (window.widgetAnimState === 'VISIBLE' || window.widgetAnimState === 'APPEARING')) {
         window.widgetAnimState = 'DISAPPEARING';
         window.widgetAnimStartTime = performance.now();
+        setEraserMaskActive(true);
     }
 }
 
@@ -338,6 +393,10 @@ function initBoilingBorder(canvas, contentW, contentH) {
     // rather than doing a getElementById on every frame of the loop below.
     const eraserPathEl = document.getElementById('eraser-path');
     let hiddenSettled = false;   // has the HIDDEN state already been wiped to screen?
+    const deformScratch = [];    // reused by boilDeformPath, see the note there
+    let lastDrawnIdx = -1;       // which drawing the border canvas currently holds
+    let introHoldIdx = null;     // the one drawing held through the appear animation
+    let skullDrawnIdx = -1, skullDrawnAlpha = -1;   // what the skull canvas currently holds
 
     const STROKE_DUR = 1200;
     const FADE_DELAY = 300;
@@ -353,6 +412,7 @@ function initBoilingBorder(canvas, contentW, contentH) {
             window.widgetAnimState = 'HIDDEN';
             seed = Math.random() * 1000;
             eraserPts = null;
+            setEraserMaskActive(false);
         }
 
         // Between songs the widget sits HIDDEN, and this loop was still clearing two
@@ -365,6 +425,9 @@ function initBoilingBorder(canvas, contentW, contentH) {
                 hiddenSettled = true;
                 ctx.clearRect(-50, -50, cw + 100, ch + 100);
                 skullCtx.clearRect(-50, -50, cw + 100, ch + 100);
+                skullDrawnIdx = -1;   // canvas is empty; force a repaint on the way back
+                introHoldIdx = null;  // next appearance picks its own held drawing
+                lastDrawnIdx = -1;
                 if (contentEl) contentEl.style.opacity = 0;
                 if (eraserPathEl) eraserPathEl.setAttribute('d', ''); // Clear mask fully
             }
@@ -373,9 +436,47 @@ function initBoilingBorder(canvas, contentW, contentH) {
         }
         hiddenSettled = false;
 
+        // Which skull frame, and how solid, on this tick — worked out before
+        // anything is wiped. Once the widget is VISIBLE the answer is identical
+        // every tick, and re-rasterising the same SVG sixty times a second to
+        // paint the same picture was the most wasteful thing in this loop.
+        let skullAlpha = 1;
+        let skullFrameIdx = SKULL_CFG.framesCount - 1;   // default: final frame
+        if (window.widgetAnimState === 'APPEARING') {
+            const fadeT = Math.min(1, Math.max(0, (elapsed - FADE_DELAY) / FADE_DUR));
+            skullAlpha = fadeT * fadeT * (3 - 2 * fadeT);   // sync with the border fade
+            skullFrameIdx = Math.min(SKULL_CFG.framesCount - 1, Math.floor((elapsed / 1000) * SKULL_CFG.fps));
+        }
+        // The outro erases into the skull canvas each frame, so it always repaints.
+        const skullChanged = window.widgetAnimState !== 'VISIBLE'
+            || skullFrameIdx !== skullDrawnIdx || skullAlpha !== skullDrawnAlpha;
+
+        // Which drawing this frame gets. Through the appear animation the widget
+        // holds ONE drawing: the line draws itself on and settles before it starts
+        // boiling, rather than wobbling its way in. Afterwards it follows the same
+        // shared beat as every other boiling outline.
+        let boilIdx;
+        if (window.widgetAnimState === 'APPEARING') {
+            if (introHoldIdx === null) introHoldIdx = boilIndexAt(ts / 1000);
+            boilIdx = introHoldIdx;
+        } else {
+            introHoldIdx = null;
+            boilIdx = boilIndexAt(ts / 1000);
+        }
+
+        // Settled and nothing else on the canvas is moving: if the drawing hasn't
+        // turned over there is nothing new to paint. The intro and outro fall
+        // through every frame — the dash offset and the eraser are animating, and
+        // those are the parts where smoothness actually shows.
+        if (window.widgetAnimState === 'VISIBLE' && !skullChanged && boilIdx === lastDrawnIdx) {
+            requestAnimationFrame(tick);
+            return;
+        }
+        lastDrawnIdx = boilIdx;
+
         // Clear slightly larger area to prevent any out-of-bound pixel artifacts from the skull
         ctx.clearRect(-50, -50, cw + 100, ch + 100);
-        skullCtx.clearRect(-50, -50, cw + 100, ch + 100);
+        if (skullChanged) skullCtx.clearRect(-50, -50, cw + 100, ch + 100);
 
         ctx.save();
         skullCtx.save(); // Save skull context
@@ -383,40 +484,29 @@ function initBoilingBorder(canvas, contentW, contentH) {
         ctx.translate(P, P);
         skullCtx.translate(P, P); // Translate skull context
 
-        const deformed = boilDeformPath(basePath, ts / 1000, seed);
+        const borderPath = boilBuildSmoothPath(boilDeformPath(basePath, boilZ(boilIdx), seed, deformScratch));
         ctx.lineWidth = BOIL_CFG.strokeWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
 
-        // ── DRAW SKULL LOGIC (FIXED: Frame clamping & elapsed time) ──
-        let skullAlpha = 1;
-        let skullFrameIdx = SKULL_CFG.framesCount - 1; // Default to last frame
-
-        if (window.widgetAnimState === 'APPEARING') {
-            // Sync alpha with border fade
-            const fadeT = Math.min(1, Math.max(0, (elapsed - FADE_DELAY) / FADE_DUR));
-            skullAlpha = fadeT * fadeT * (3 - 2 * fadeT);
-            
-            // Calculate frame index based on ELAPSED time instead of total time, clamped to the last frame.
-            skullFrameIdx = Math.min(SKULL_CFG.framesCount - 1, Math.floor((elapsed / 1000) * SKULL_CFG.fps));
-        } else if (window.widgetAnimState === 'VISIBLE' || window.widgetAnimState === 'DISAPPEARING') {
-            skullAlpha = 1;
-            skullFrameIdx = SKULL_CFG.framesCount - 1; // Lock cleanly to final frame
-        }
-
-        const frame = skullFrames[skullFrameIdx];
-        if (frame && frame.complete && skullAlpha > 0) {
-            try {
-                skullCtx.save();
-                skullCtx.globalAlpha = skullAlpha;
-                skullCtx.drawImage(
-                    frame,
-                    SKULL_CFG.sx, SKULL_CFG.sy, SKULL_CFG.sw, SKULL_CFG.sh,
-                    SKULL_CFG.dx, SKULL_CFG.dy,
-                    SKULL_CFG.sw * SKULL_CFG.scale, SKULL_CFG.sh * SKULL_CFG.scale
-                );
-                skullCtx.restore();
-            } catch (err) {}
+        // ── DRAW SKULL ──
+        if (skullChanged) {
+            skullDrawnIdx = skullFrameIdx;
+            skullDrawnAlpha = skullAlpha;
+            const frame = skullFrames[skullFrameIdx];
+            if (frame && frame.complete && skullAlpha > 0) {
+                try {
+                    skullCtx.save();
+                    skullCtx.globalAlpha = skullAlpha;
+                    skullCtx.drawImage(
+                        frame,
+                        SKULL_CFG.sx, SKULL_CFG.sy, SKULL_CFG.sw, SKULL_CFG.sh,
+                        SKULL_CFG.dx, SKULL_CFG.dy,
+                        SKULL_CFG.sw * SKULL_CFG.scale, SKULL_CFG.sh * SKULL_CFG.scale
+                    );
+                    skullCtx.restore();
+                } catch (err) {}
+            }
         }
         // ─────────────────────────────────────────────────────────────
 
@@ -442,27 +532,23 @@ function initBoilingBorder(canvas, contentW, contentH) {
 
             ctx.fillStyle = `rgba(255, 255, 255, ${smoothFade})`;
             ctx.strokeStyle = `rgba(255, 255, 255, ${smoothFade})`;
-            boilTraceSmoothPath(ctx, deformed);
-            ctx.fill();
-            ctx.stroke();
+            ctx.fill(borderPath);
+            ctx.stroke(borderPath);
 
             if (contentEl) contentEl.style.opacity = smoothFade;
 
             ctx.strokeStyle = '#000000';
-            boilTraceSmoothPath(ctx, deformed);
-            ctx.stroke();
+            ctx.stroke(borderPath);
 
         } else if (window.widgetAnimState === 'VISIBLE' || window.widgetAnimState === 'DISAPPEARING') {
             ctx.setLineDash([]);
             ctx.fillStyle = '#ffffff';
             ctx.strokeStyle = '#ffffff';
-            boilTraceSmoothPath(ctx, deformed);
-            ctx.fill();
-            ctx.stroke();
+            ctx.fill(borderPath);
+            ctx.stroke(borderPath);
 
             ctx.strokeStyle = '#000000';
-            boilTraceSmoothPath(ctx, deformed);
-            ctx.stroke();
+            ctx.stroke(borderPath);
 
             if (contentEl && contentEl.style.opacity !== "1") {
                 contentEl.style.opacity = 1;
@@ -839,6 +925,11 @@ function connectws() {
 // only actually moves when a label's text changes (see the refresh below).
 let progressContainerW = 0;
 let lastTimeCurrentText = null, lastTimeRemainingText = null, lastTextOpacity = null;
+// The sine under the progress wave runs at about 0.6Hz, so redrawing it on twos is
+// indistinguishable — and each redraw is a fresh path string, an SVG re-parse and a
+// repaint of the bar, which is the second-biggest per-frame cost here after the border.
+const WAVE_FRAME_MS = 1000 / 30;
+let lastWaveDraw = -1e9, lastThumbX = -1;
 function refreshProgressWidth() { if (progressContainer) progressContainerW = progressContainer.clientWidth; }
 
 function updateUI(ts) {
@@ -899,22 +990,36 @@ function updateUI(ts) {
         const containerW = progressContainerW;
         const thumbX = smoothProgress * containerW;
 
-        progressThumbEl.style.left = thumbX + 'px';
-        progressSvg.style.width = Math.max(0, thumbX + 10) + 'px';
-
-        let d = "";
-        if (thumbX > 0) {
-            const segments = Math.max(10, Math.floor(thumbX / 2));
-            for (let i = 0; i <= segments; i++) {
-                const px = (i / segments) * thumbX;
-                const py = 12 + Math.sin((px * 0.15) + (timeMs * 0.004)) * 1.5;
-                if (i === 0) d += `M ${px} ${py}`;
-                else d += ` L ${px} ${py}`;
-            }
-        } else {
-            d = "M 0 12";
+        // The bar creeps across over minutes, so most frames ask for a position it
+        // is already at. Each of these is a style invalidation on an element the
+        // marquee has just touched, so skipping the no-ops is worth the compare.
+        const thumbPx = Math.round(thumbX * 10) / 10;
+        if (thumbPx !== lastThumbX) {
+            lastThumbX = thumbPx;
+            progressThumbEl.style.left = thumbPx + 'px';
+            progressSvg.style.width = Math.max(0, thumbPx + 10) + 'px';
         }
-        progressPath.setAttribute('d', d);
+
+        if (ts - lastWaveDraw >= WAVE_FRAME_MS) {
+            lastWaveDraw = (ts - lastWaveDraw > 2 * WAVE_FRAME_MS) ? ts : lastWaveDraw + WAVE_FRAME_MS;
+            let d = "";
+            if (thumbX > 0) {
+                // One point every ~3px. The wave's period is ~42px and its amplitude
+                // 1.5px, so this is still ~14 points a cycle — visually identical to
+                // the old 2px spacing, at two thirds the string length. Rounding the
+                // coordinates cuts it much further again: the raw floats were writing
+                // seventeen significant digits per number into the attribute.
+                const segments = Math.max(10, Math.floor(thumbX / 3));
+                for (let i = 0; i <= segments; i++) {
+                    const px = (i / segments) * thumbX;
+                    const py = 12 + Math.sin((px * 0.15) + (timeMs * 0.004)) * 1.5;
+                    d += (i === 0 ? 'M ' : ' L ') + px.toFixed(1) + ' ' + py.toFixed(2);
+                }
+            } else {
+                d = "M 0 12";
+            }
+            progressPath.setAttribute('d', d);
+        }
     }
     requestAnimationFrame(updateUI);
 }
