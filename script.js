@@ -650,7 +650,7 @@ const progressPath = document.getElementById('progressPath');
 
 /* ═══════════════════════════════════════════════════════════════════
    SMOOTH-WRAP MARQUEE — title + artist, ported from the Music Card
-   (collage.html). Two copies wrap seamlessly: rest at home, cruise once
+   (MusicUIRender/app.js). Two copies wrap seamlessly: rest at home, cruise once
    around (through the end and the wrapped start) at a shared ease-in →
    cruise → ease-out pace, land back at home, loop. A soft edge fade
    (written inline per frame) masks the clipped ends. Both lines share one
